@@ -1,0 +1,142 @@
+<link rel="stylesheet" href="{{ h.url_for_static('/terriassistant/terriassistant.css') }}">
+
+<div
+  id="terriassistant-app"
+  class="ta-app"
+  data-view-id="{{ view_id }}"
+  data-bootstrap-url="/api/terriassistant/view/{{ view_id }}/bootstrap"
+  data-chat-url="/api/terriassistant/view/{{ view_id }}/chat"
+  data-save-url="/api/terriassistant/view/{{ view_id }}/save"
+  data-terria-instance-url="{{ terria_instance_url }}"
+>
+  <div class="ta-shell">
+
+    {# ========================= CHAT COLUMN ========================= #}
+    <section class="ta-column ta-column-chat" aria-label="{{ _('Map assistant') }}">
+      <header class="ta-header">
+        <div class="ta-header-main">
+          <span class="ta-avatar" aria-hidden="true">
+            <svg class="ta-icon" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9"/>
+              <path d="M3 12h18"/>
+              <path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/>
+            </svg>
+          </span>
+          <div class="ta-header-text">
+            <h3 class="ta-title">{{ title }}</h3>
+            <p class="ta-subtitle">{{ _('Chat to load and style your map') }}</p>
+          </div>
+        </div>
+        <div class="ta-header-actions">
+          <div
+            class="ta-badge"
+            {% if not chat_enabled %}data-status="off"{% endif %}
+            title="{% if chat_enabled %}{{ _('AI assistant active') }}{% else %}{{ _('AI assistant not configured') }}{% endif %}"
+          >
+            {% if chat_enabled %}{{ _('AI assistant') }}{% else %}{{ _('AI not configured') }}{% endif %}
+          </div>
+          <button type="button" class="btn btn-icon" id="ta-clear-chat" title="{{ _('Clear chat') }}" aria-label="{{ _('Clear chat') }}" disabled>
+            <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="ta-draft-banner" class="ta-banner ta-hidden">
+        <span>{{ _('You have a local draft that differs from the saved map.') }}</span>
+        <div class="ta-banner-actions">
+          <button type="button" class="btn btn-small" id="ta-use-draft">{{ _('Use draft') }}</button>
+          <button type="button" class="btn btn-small" id="ta-discard-draft">{{ _('Discard') }}</button>
+        </div>
+      </div>
+
+      <div id="ta-warnings" class="ta-warnings"></div>
+
+      <div id="ta-messages" class="ta-messages" aria-live="polite"></div>
+
+      <div class="ta-suggestions">
+        <div class="ta-section-label">{{ _('Suggestions') }}</div>
+        <div id="ta-suggestion-list" class="ta-suggestion-list"></div>
+      </div>
+
+      <form id="ta-chat-form" class="ta-input-area">
+        <label for="ta-input" class="ta-section-label">{{ _('Message') }}</label>
+        <div class="ta-composer">
+          <textarea
+            id="ta-input"
+            class="ta-textarea"
+            rows="3"
+            placeholder="{{ _('Example: color the points by population using a red palette with 5 bins') }}"
+          ></textarea>
+          <div class="ta-input-actions">
+            <span id="ta-status" class="ta-status"></span>
+            <button type="submit" class="btn btn-primary" id="ta-send">
+              <span>{{ _('Send') }}</span>
+              <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    {# ========================= MAP COLUMN ========================= #}
+    <section class="ta-column ta-column-map" aria-label="{{ _('Map preview') }}">
+      <header class="ta-header ta-header-map">
+        <div class="ta-header-main">
+          <span class="ta-avatar" aria-hidden="true">
+            <svg class="ta-icon" viewBox="0 0 24 24">
+              <path d="M9 4l-6 2v14l6-2 6 2 6-2V4l-6 2-6-2z"/>
+              <path d="M9 4v14"/><path d="M15 6v14"/>
+            </svg>
+          </span>
+          <div class="ta-header-text">
+            <h3 class="ta-title">{{ _('Map') }}</h3>
+            <p id="ta-summary" class="ta-subtitle">{{ terria_summary or _('Default map styling') }}</p>
+          </div>
+        </div>
+        <div class="ta-toolbar" role="toolbar" aria-label="{{ _('Map actions') }}">
+          <button type="button" class="btn btn-primary ta-hidden" id="ta-save" title="{{ _('Save map configuration') }}">
+            <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>
+            </svg>
+            <span>{{ _('Save') }}</span>
+          </button>
+          <div class="ta-toolbar-group" role="group">
+            <button type="button" class="btn btn-icon" id="ta-reset-saved" title="{{ _('Reset to saved') }}" aria-label="{{ _('Reset to saved') }}">
+              <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+            </button>
+            <button type="button" class="btn btn-icon" id="ta-reset-default" title="{{ _('Reset to default styling') }}" aria-label="{{ _('Reset to default styling') }}">
+              <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4"/><path d="M5.6 5.6l2.8 2.8"/><path d="M3 12h4"/><path d="M5.6 18.4l2.8-2.8"/><path d="M12 21v-4"/><path d="M18.4 18.4l-2.8-2.8"/><path d="M21 12h-4"/><path d="M18.4 5.6l-2.8 2.8"/></svg>
+            </button>
+            <a class="btn btn-icon" id="ta-open-window" target="_blank" rel="noopener" href="{% if encoded_config %}{{ terria_instance_url }}#start={{ encoded_config }}{% else %}{{ terria_instance_url }}{% endif %}" title="{{ _('Open in a new window') }}" aria-label="{{ _('Open in a new window') }}">
+              <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>
+            </a>
+            <button type="button" class="btn btn-icon" id="ta-fullwidth" title="{{ _('Toggle full width') }}" aria-label="{{ _('Toggle full width') }}">
+              <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div class="ta-map-surface">
+        <div id="ta-map-loading" class="ta-map-loading ta-hidden"><span>{{ _('Updating map…') }}</span></div>
+        <iframe
+          id="ta-iframe"
+          class="ta-iframe"
+          src="{% if encoded_config %}{{ terria_instance_url }}#start={{ encoded_config }}{% else %}{{ terria_instance_url }}{% endif %}"
+          allow="clipboard-write; clipboard-read"
+          allowFullScreen mozAllowFullScreen webkitAllowFullScreen
+          title="{{ _('TerriaJS map') }}"
+        ></iframe>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="{{ h.url_for_static('/terriassistant/terriassistant.js') }}"></script>
