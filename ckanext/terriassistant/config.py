@@ -72,6 +72,7 @@ class TerriassistantSettings:
     prompt_history_messages: int = 10
     max_config_bytes: int = 4 * 1024 * 1024
     proxy_token_ttl: int = 3600
+    json_repair_attempts: int = 2
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any]) -> "TerriassistantSettings":
@@ -101,6 +102,9 @@ class TerriassistantSettings:
             ),
             max_config_bytes=_as_int(config.get(p + "max_config_bytes"), cls.max_config_bytes),
             proxy_token_ttl=_as_int(config.get(p + "proxy_token_ttl"), cls.proxy_token_ttl),
+            json_repair_attempts=_as_int(
+                config.get(p + "json_repair_attempts"), cls.json_repair_attempts
+            ),
         )
 
     def can_view_resource(self, resource: Mapping[str, Any] | None) -> bool:

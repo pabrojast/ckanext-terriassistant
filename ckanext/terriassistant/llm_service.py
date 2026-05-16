@@ -157,21 +157,51 @@ class LlmService:
                 "The AI service is not configured. Set ckanext.terriassistant.deepseek_api_key."
             )
 
-        payload = {
+        base_messages = self._build_messages(
+            messages, profile, current_spec, terria_type, validation_feedback
+        )
+        repair_turns: list[dict[str, str]] = []
+        max_attempts = max(1, 1 + int(self.settings.json_repair_attempts))
+        last_error: LlmResponseError | None = None
+
+        for _ in range(max_attempts):
+            raw_content = self._call_chat_completion(base_messages + repair_turns)
+            try:
+                candidate = json.loads(raw_content)
+            except ValueError as exc:
+                last_error = LlmResponseError(
+                    "The AI service returned malformed JSON."
+                )
+                repair_turns = self._build_repair_turns(
+                    raw_content, "JSON parse error: {0}".format(exc)
+                )
+                continue
+            try:
+                return self._normalize_candidate(candidate, profile)
+            except LlmResponseError as exc:
+                last_error = exc
+                repair_turns = self._build_repair_turns(raw_content, str(exc))
+                continue
+
+        raise last_error or LlmResponseError(
+            "The AI service returned an invalid JSON response."
+        )
+
+    # ------------------------------------------------------------------
+
+    def _call_chat_completion(self, messages: list[dict[str, str]]) -> str:
+        payload: dict[str, Any] = {
             "model": self.settings.deepseek_model,
-            "messages": self._build_messages(
-                messages, profile, current_spec, terria_type, validation_feedback
-            ),
+            "messages": messages,
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
             "max_tokens": 1800,
+            "thinking": (
+                {"type": "enabled", "reasoning_effort": "high"}
+                if self.settings.deepseek_thinking
+                else {"type": "disabled"}
+            ),
         }
-        payload["thinking"] = (
-            {"type": "enabled", "reasoning_effort": "high"}
-            if self.settings.deepseek_thinking
-            else {"type": "disabled"}
-        )
-
         url = "{0}/chat/completions".format(self.settings.deepseek_base_url.rstrip("/"))
         headers = {
             "Authorization": "Bearer {0}".format(self.settings.deepseek_api_key),
@@ -182,14 +212,27 @@ class LlmService:
             response.raise_for_status()
         except requests.RequestException as exc:
             raise LlmServiceError("The AI service request failed.") from exc
-
         try:
-            content = response.json()["choices"][0]["message"]["content"]
-            candidate = json.loads(content)
+            return response.json()["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError, ValueError) as exc:
-            raise LlmResponseError("The AI service returned an invalid JSON response.") from exc
+            raise LlmResponseError(
+                "The AI service returned an unexpected envelope."
+            ) from exc
 
-        return self._normalize_candidate(candidate, profile)
+    def _build_repair_turns(self, raw_content: str, error_detail: str) -> list[dict[str, str]]:
+        # Truncate the broken content so we don't blow the context window.
+        truncated = (raw_content or "")[:2000]
+        feedback = (
+            "Your previous response could not be used. "
+            "Issue: {0}\n\n"
+            "Reply again with ONLY a single valid JSON object matching the schema "
+            "described in the system message. Do not include any prose, code fences, "
+            "or commentary outside the JSON. Preserve the user's cumulative intent."
+        ).format(error_detail)
+        return [
+            {"role": "assistant", "content": truncated},
+            {"role": "user", "content": feedback},
+        ]
 
     # ------------------------------------------------------------------
 
