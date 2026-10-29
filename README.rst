@@ -90,3 +90,33 @@ License
 =======
 
 AGPL v3 or later.
+
+Ask the data (Terria)
+====================
+
+The authenticated ``/api/terriassistant/data`` API complements the resource styling assistant. It uses ``deepseek-flash`` for tool selection and explanations; all numeric results come from deterministic tools. Enable ``ckanext.terriassistant.data_enabled = true`` and run dedicated workers::
+
+    ckan -c /app/production.ini jobs worker terria-data
+
+It reuses ``ckanext.terriassistant.deepseek_api_key`` and ``deepseek_base_url`` server-side. ``data_model`` defaults to ``deepseek-flash``; the styling assistant's existing model is unchanged. With ckanext-envvars, use ``CKANEXT__TERRIASSISTANT__DATA_ENABLED`` and ``CKANEXT__TERRIASSISTANT__DATA_MODEL``. The Terria frontend needs ``parameters.dataAssistant.enabled`` and same-origin ``ckanSession``.
+
+Contract and tools
+------------------
+
+GET ``bootstrap`` provides a CSRF token and capabilities. POST ``conversations``, then POST ``conversations/{id}/turns`` with a unique request_id, question, selected source descriptors and optional dates/polygon/point. Poll GET ``turns/{id}``; when ``awaiting_tools``, the client executes only pending registered layer tools and POSTs ``turns/{id}/tool-results`` with exactly their IDs. Cancel via POST ``turns/{id}/cancel``; delete temporary state with DELETE ``conversations/{id}``.
+
+Closed tools: search_catalog, describe_source, query_data, compare_results, present_result, suggest_map_action. Calculations cover filters/ranking, summary statistics, grouped aggregates, temporal series, annual linear trends (3 observations spanning 6 months), Pearson correlation, Tukey IQR outliers, mean/percentage comparisons and spatial selection. Missing/nonfinite values are excluded and counted; zero remains zero. Source columns and units are never invented. Different sources with unknown units cannot be subtracted. Correlations do not establish causation.
+
+Evidence includes source identity, parameters, counts, coverage and truncation. Tables/charts/CSV refer to computed evidence; map actions require a user click. Browser tools calculate loaded CSV/GeoJSON and COG values; CKAN tools read DataStore or authorized CSV/GeoJSON resources. Samples from describe_source are marked and cannot support full-population claims. No arbitrary code, SQL or client-supplied download URL is executed. Downloads pin public DNS addresses and recheck each redirect; credentials are never forwarded.
+
+Access and lifetime
+-------------------
+
+Every endpoint requires an active CKAN login; writes require CSRF. Conversations are bound to both account and browser session. Resource access is rechecked before provider calls and polling; raw analysis also requires ``ResourceUtils.user_may_download`` (including datashare permissions). Private source rows may be sent to DeepSeek only under those permissions. Logout invalidates session conversations and cancels jobs. API responses are private/no-store; prompts, provider keys and reasoning are not returned. Redis contains ephemeral state and expires it, with no conversation database/history or data in shares.
+
+Defaults (``ckanext.terriassistant.data_`` prefix): ttl=1800 seconds, timeout=300 seconds, max_rounds=8, max_calls=16, max_bytes=26214400, max_rows=150000, request_bytes=4194304. One active turn per user and 10 questions/conversations per minute. Result tables are capped at 200 rows, time series at 2000 points; the model gets at most the first 100 result rows explicitly marked as a preview. Five turns of history are retained for context. Oversized input fails instead of sampling silently.
+
+Verification
+------------
+
+Install requirements plus pytest, fakeredis[lua], flask and flask-wtf; run ``python -m pytest -q tests``. CI exercises jsonschema 3.0 (compatible with the existing CKAN DOI extension) and 4.23 using Draft 7 schemas. API tests use a CKAN stub, Flask sessions and Redis Lua semantics; integrated CKAN/DeepSeek/browser validation is additionally required before environment promotion.
