@@ -120,3 +120,5 @@ Verification
 ------------
 
 Install requirements plus pytest, fakeredis[lua], flask and flask-wtf; run ``python -m pytest -q tests``. CI exercises jsonschema 3.0 (compatible with the existing CKAN DOI extension) and 4.23 using Draft 7 schemas. API tests use a CKAN stub, Flask sessions and Redis Lua semantics; integrated CKAN/DeepSeek/browser validation is additionally required before environment promotion.
+
+Catalog searches resolve an exact dataset ID/name through authorized ``package_show`` before full-text search, retain both dataset slug and title, and return at most 20 resource descriptors. Truncation is explicit so the model can narrow broad searches; this also bounds repeated permission checks during polling.

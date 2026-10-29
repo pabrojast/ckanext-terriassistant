@@ -39,6 +39,29 @@ def service(monkeypatch):
 BASE = '/api/terriassistant/data'
 
 
+def test_catalog_exact_name_keeps_slug_and_title(service, monkeypatch):
+    s = service
+    package = {'id': 'dataset', 'name': 'qa-private-20261029', 'title': 'Private QA',
+               'resources': [{'id': 'resource'}]}
+    lookup = Mock(return_value=package)
+    search = Mock(side_effect=AssertionError('Exact match must not become a broad Solr query'))
+    s.tk.get_action = lambda name: {'package_show': lookup, 'package_search': search}[name]
+    monkeypatch.setattr(s.sources, 'resource_for', lambda *args: ({'id': 'resource'}, package))
+    result = s.sources.search('alice', 'qa-private-20261029')
+    assert result['datasets_found'] == 1
+    assert result['sources'][0]['dataset_name'] == 'qa-private-20261029'
+    assert result['sources'][0]['dataset_title'] == 'Private QA'
+    assert result['truncated'] is False
+
+
+def test_catalog_results_are_bounded_and_explicitly_truncated(service):
+    s = service
+    packages = [{'id': str(i), 'resources': [{'id': f'{i}-{j}'} for j in range(20)]} for i in range(5)]
+    s.tk.get_action = lambda name: lambda *args: {'count': 100, 'results': packages}
+    result = s.sources.search('alice', 'water quality')
+    assert len(result['sources']) == 20 and result['truncated'] is True
+
+
 def setup_conversation(s, client=None):
     client = client or s.client
     bootstrap = client.get(BASE + '/bootstrap')

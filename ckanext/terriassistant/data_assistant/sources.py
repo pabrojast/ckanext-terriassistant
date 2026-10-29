@@ -3,6 +3,7 @@ import csv
 import io
 import ipaddress
 import json
+import re
 import socket
 from urllib.parse import urljoin, urlsplit
 
@@ -36,7 +37,8 @@ def descriptor(resource, package):
     return {"id": "ckan:" + resource["id"], "resource_id": resource["id"],
             "dataset_id": package["id"], "name": str(resource.get("name") or resource["id"])[:200],
             "format": str(resource.get("format") or "")[:50],
-            "dataset_name": str(package.get("title") or package["id"])[:200],
+            "dataset_name": str(package.get("name") or package["id"])[:200],
+            "dataset_title": str(package.get("title") or package.get("name") or package["id"])[:200],
             "url": "/dataset/" + package["id"] + "/resource/" + resource["id"],
             "private": bool(package.get("private")), "modified": resource.get("last_modified"),
             "units": None}
@@ -45,17 +47,31 @@ def descriptor(resource, package):
 def search(user_id, query, limit=10):
     from ckan.plugins import toolkit as tk
     context = context_for(user_id)
-    result = tk.get_action("package_search")(context, {"q": query, "rows": limit,
-                                                        "include_private": True})
+    result = None
+    # Solr's partial-match analyzer splits hyphenated slugs. Resolve exact IDs/names
+    # through the authorized action first so a precise request is not diluted.
+    if re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,99}", query.strip()):
+        try:
+            package = tk.get_action("package_show")(context, {"id": query.strip()})
+            result = {"count": 1, "results": [package]}
+        except (tk.ObjectNotFound, tk.NotAuthorized):
+            pass
+    if result is None:
+        result = tk.get_action("package_search")(context, {"q": query, "rows": limit,
+                                                            "include_private": True})
     sources = []
-    for package in result["results"]:
+    truncated = len(result["results"]) < result["count"]
+    for package in result["results"][:limit]:
+        truncated |= len(package.get("resources", [])) > 20
         for resource in package.get("resources", [])[:20]:
+            if len(sources) >= 20:
+                return {"datasets_found": result["count"], "sources": sources, "truncated": True}
             try:
                 verified, parent = resource_for(user_id, resource["id"])
                 sources.append(descriptor(verified, parent))
             except (tk.NotAuthorized, tk.ObjectNotFound):
                 continue
-    return {"datasets_found": result["count"], "sources": sources}
+    return {"datasets_found": result["count"], "sources": sources, "truncated": truncated}
 
 
 def public_addresses(host, port):
