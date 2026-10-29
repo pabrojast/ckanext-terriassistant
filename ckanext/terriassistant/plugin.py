@@ -20,6 +20,7 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IBlueprint)
     plugins.implements(plugins.IResourceView, inherit=True)
     plugins.implements(plugins.IActions, inherit=True)
+    plugins.implements(plugins.IAuthenticator, inherit=True)
 
     def __init__(self, name=None):
         super().__init__()
@@ -36,7 +37,12 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
 
     # IBlueprint
     def get_blueprint(self):
-        return terriassistant_api
+        from .data_assistant.api import blueprint as data_api
+        return [terriassistant_api, data_api]
+
+    def logout(self):
+        from .data_assistant.api import clear_session
+        clear_session()
 
     # IResourceView
     def info(self):
