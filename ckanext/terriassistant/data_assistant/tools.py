@@ -2,6 +2,7 @@
 import json
 
 from jsonschema import Draft7Validator
+from .map_tools import PROPOSAL
 
 
 def obj(properties, required=()):
@@ -40,7 +41,16 @@ QUERY = obj({
 
 SCHEMAS = {
     "search_catalog": obj({"query": dict(type="string", maxLength=500),
-                           "limit": dict(type="integer", minimum=1, maximum=10)}, ["query"]),
+                           "limit": dict(type="integer", minimum=1, maximum=10),
+                           "polygon": QUERY["properties"]["polygon"],
+                           "use_area": dict(type="boolean"),
+                           "formats": dict(type="array", maxItems=10, items=STRING),
+                           "organization": STRING,
+                           "tags": dict(type="array", maxItems=10, items=STRING),
+                           "cursor": dict(type="string", maxLength=30)}, ["query"]),
+    "search_map_knowledge": obj({"query": STRING, "layer_type": STRING}, ["query"]),
+    "inspect_map_source": obj({"source_id": SOURCE, "view_id": SOURCE}, ["source_id"]),
+    "propose_map_changes": PROPOSAL,
     "describe_source": obj({"source_id": SOURCE}, ["source_id"]),
     "query_data": QUERY,
     "compare_results": obj({"left_id": STRING, "right_id": STRING,
@@ -55,7 +65,10 @@ SCHEMAS = {
                                "start": STRING, "end": STRING, "date_column": STRING}, ["source_id", "action"]),
 }
 DESCRIPTIONS = {
-    "search_catalog": "Search the authorized IHP CKAN catalog for datasets and resources. Query uses CKAN search syntax; use short subject terms.",
+    "search_catalog": "Search authorized CKAN datasets/resources. Short subject terms, optional formats/organization/tags. Defaults to selected polygon; use_area=false opts out. Spatial matches intersect declared dataset coverage, not observations. Follow next_cursor when truncated, including empty pages.",
+    "search_map_knowledge": "Retrieve reviewed, versioned documentation and examples before designing or styling a map. Include the layer type and task. References K1 etc are guidance, not numeric evidence.",
+    "inspect_map_source": "Inspect a registered CKAN resource's available Terria views and a sanitized style example. Use view_id to choose a particular view. Permission checked on every call.",
+    "propose_map_changes": "Propose one batch of map edits for explicit user Apply/Undo. Use only current map layer IDs and advertised capabilities. style_layer accepts table/vector style_spec, raster_style or advertised wms_style. set_date uses an available date. add_ckan uses a searched source_id and optional view_id. add_url accepts only a URL supplied by the user. Never claims edits have already happened.",
     "describe_source": "Inspect metadata and exact column names, types, units and coverage before calculating. Sources may be CKAN resources or loaded Terria layers.",
     "query_data": "Calculate on a complete permitted data source, never on the describe sample. Statistics, filtered rows/rankings, grouped aggregates, time series, annual trend, Pearson correlation or IQR outliers. Spatial filter uses a WGS84 polygon. COG layers require a selected/supplied point or polygon; use time_series for multiple dates. Nulls are excluded; statistics include coverage. Use separate queries and compare_results for different periods/sources. No code or SQL.",
     "compare_results": "Compare computed evidence: difference and percentage between means, or Pearson correlation of series aligned on exact x/time keys. Never establishes causation. Inputs must have matching units for differences.",

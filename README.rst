@@ -122,3 +122,48 @@ Verification
 Install requirements plus pytest, fakeredis[lua], flask and flask-wtf; run ``python -m pytest -q tests``. CI exercises jsonschema 3.0 (compatible with the existing CKAN DOI extension) and 4.23 using Draft 7 schemas. API tests use a CKAN stub, Flask sessions and Redis Lua semantics; integrated CKAN/DeepSeek/browser validation is additionally required before environment promotion.
 
 Catalog searches resolve an exact dataset ID/name through authorized ``package_show`` before full-text search, retain both dataset slug and title, and return at most 20 resource descriptors. Truncation is explicit so the model can narrow broad searches; this also bounds repeated permission checks during polling.
+
+AI Assistant: map design and spatial discovery
+==============================================
+
+The authenticated data conversation also supports map design. The frontend label is
+AI Assistant / Asistente IA; the existing ``dataAssistant`` configuration and API
+prefix remain compatible. Bootstrap advertises ``capabilities.map_editing=1`` and
+``spatial_search=1``. Turn requests optionally include a validated ``map_context``
+with layer capabilities, presentation, columns, dates, basemaps and camera. It is
+refreshed each turn and excludes credentials, source URLs and raw files.
+
+New tools are ``search_map_knowledge``, ``inspect_map_source`` and
+``propose_map_changes``. Proposals return an ID, base revision and typed operations;
+they do not mutate CKAN or the map. The client validates, applies on user click,
+rolls back failures and keeps a conflict-aware session-only undo history.
+Table/vector styles reuse the existing style-spec builder; COG styles use native
+renderOptions and WMS styles must be advertised by the service. Existing numeric
+analysis, evidence and legacy actions remain supported.
+
+``knowledge.py`` ships reviewed English/Spanish retrieval tags, guidance and
+examples, versioned with the extension. Retrieval ranks format/task/text matches
+and returns at most four referenced excerpts. No embeddings or vector service are
+required. Authorized CKAN views are inspected on demand, sanitized before entering
+model context and never added to the shared corpus.
+
+POST ``catalog/search`` accepts query, polygon, formats, organization, tags and a
+continuation cursor. It is authenticated, CSRF-protected and rate-limited. It uses
+CKAN ``package_search`` with ``extras.ext_bbox`` and the calling user's permissions,
+then intersects declared dataset coverage with the drawn polygon. If search hooks
+omit a private resource list, it is recovered through the calling user's authorized
+``package_show`` action; denied datasets remain excluded. It does not
+claim actual observations inside the area. Up to 100 candidate datasets and 20
+resource descriptors are considered per response; ``next_cursor`` continues both
+datasets and resources. Empty partial pages are not final no-results answers.
+Stored coverage follows GeoJSON antimeridian semantics; drawn polygons are
+unwrapped and split. Missing/invalid coverage cannot establish an intersection.
+
+GET ``sources/<resource_id>/map?view_id=...`` checks read/download permissions and
+returns view choices plus the generated Terria model, without shared caching.
+Restricted models are non-shareable and proxy tokens are stripped for same-origin
+session authorization. It requires the matching ``terria_view`` release with
+``saved_config`` support. The assistant can add user-supplied HTTP(S) data URLs and
+local files using the browser's existing loaders. Local files remain local; share
+links omit local/private/non-shareable layers. This release does not create
+datasets or save resource views.
