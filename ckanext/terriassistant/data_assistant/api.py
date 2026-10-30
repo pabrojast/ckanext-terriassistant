@@ -10,10 +10,11 @@ from flask import Blueprint, jsonify, request, session
 from flask_wtf.csrf import generate_csrf, validate_csrf
 from werkzeug.exceptions import HTTPException
 from wtforms.validators import ValidationError
+from jsonschema.exceptions import ValidationError as SchemaValidationError
 
 from ckan.plugins import toolkit as tk
 
-from . import runtime, sources
+from . import runtime, sources, map_tools
 from .settings import Settings
 from .tools import SCHEMAS, validate_call
 
@@ -106,7 +107,7 @@ def error(exc):
         return jsonify(error="Access to these data is no longer permitted"), 403
     if isinstance(exc, tk.ObjectNotFound):
         return jsonify(error="Data not found"), 404
-    if isinstance(exc, (ValueError, TypeError, KeyError)):
+    if isinstance(exc, (ValueError, TypeError, KeyError, SchemaValidationError)):
         return jsonify(error="Invalid request or unavailable result"), 400
     runtime.log.warning("Terria data API failed (%s)", type(exc).__name__)
     return jsonify(error="The data assistant is temporarily unavailable"), 503
@@ -154,7 +155,7 @@ def public_turn(state):
         return {"id": turn["id"], "status": "error", "error": "Analysis timed out; retry with a smaller range"}
     turn["evidence"] = [state["evidence"][eid] for eid in turn["evidence_ids"]]
     # Only expose outputs; never return prompts, provider credentials or reasoning.
-    return {k: turn[k] for k in ("id", "status", "progress", "pending", "answer", "error", "evidence", "artifacts", "actions") if k in turn}
+    return {k: turn[k] for k in ("id", "status", "progress", "pending", "answer", "error", "evidence", "artifacts", "actions", "proposals") if k in turn}
 
 
 @blueprint.get("/bootstrap")
@@ -162,9 +163,28 @@ def bootstrap():
     from ..config import TerriassistantSettings
     provider = TerriassistantSettings.from_config(tk.config)
     return jsonify(enabled=bool(provider.deepseek_api_key), model=settings().model,
+                   capabilities={"map_editing": 1, "spatial_search": 1},
                    csrf_token=generate_csrf(), tools=SCHEMAS,
                    limits={"max_rows": settings().max_rows, "max_bytes": settings().max_bytes,
                            "timeout": settings().timeout, "ttl": settings().ttl})
+
+
+@blueprint.get("/sources/<resource_id>/map")
+def map_source(resource_id):
+    if not UUID.fullmatch(resource_id):
+        fail("Invalid resource identifier")
+    return jsonify(sources.map_source(str(user().id), resource_id, request.args.get("view_id"), include_config=True))
+
+
+@blueprint.post("/catalog/search")
+def search_catalog():
+    rate_key = runtime.PREFIX + "catalog-rate:" + str(user().id) + ":" + str(int(time.time() // 60))
+    if runtime.redis().incr(rate_key) > 30:
+        fail("Too many searches; retry in a minute", 429)
+    runtime.redis().expire(rate_key, 120)
+    args = validate_call("search_catalog", body())
+    args.pop("use_area", None)
+    return jsonify(sources.search(str(user().id), **args))
 
 
 @blueprint.post("/conversations")
@@ -227,6 +247,12 @@ def start_turn(cid):
     if state.get("turn", {}).get("request_id") == request_id:
         return jsonify(public_turn(state))
     current = source_context(data.get("sources", []), state["user"])
+    map_context = data.get("map_context")
+    if map_context is not None:
+        map_tools.validate_context(map_context)
+        for layer in map_context["layers"]:
+            if layer.get("resource_id"):
+                sources.resource_for(state["user"], layer["resource_id"])
     selection = data.get("selection") or {}
     if not isinstance(selection, dict) or set(selection) - {"start", "end", "polygon", "point", "band"}:
         fail("Invalid map selection")
@@ -246,6 +272,7 @@ def start_turn(cid):
         runtime.redis().delete(runtime.PREFIX + "active:" + state["user"])
         fail("Conversation has too many sources; start a new conversation")
     state["selection"] = selection
+    state["map_context"] = map_context
     # Bound history at completed-turn boundaries, never split assistant/tool pairs.
     starts = [i for i, msg in enumerate(state["messages"]) if msg["role"] == "user"]
     if len(starts) >= 5:
