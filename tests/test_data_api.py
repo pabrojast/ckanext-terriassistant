@@ -43,6 +43,7 @@ BASE = '/api/terriassistant/data'
 def test_catalog_exact_name_keeps_slug_and_title(service, monkeypatch):
     s = service
     package = {'id': 'dataset', 'name': 'qa-private-20261029', 'title': 'Private QA',
+               'organization': {'name': 'water', 'title': 'Water Institute'},
                'resources': [{'id': 'resource'}]}
     lookup = Mock(return_value=package)
     search = Mock(side_effect=AssertionError('Exact match must not become a broad Solr query'))
@@ -52,6 +53,7 @@ def test_catalog_exact_name_keeps_slug_and_title(service, monkeypatch):
     assert result['datasets_found'] == 1
     assert result['sources'][0]['dataset_name'] == 'qa-private-20261029'
     assert result['sources'][0]['dataset_title'] == 'Private QA'
+    assert result['sources'][0]['organization'] == 'Water Institute'
     assert result['truncated'] is False
 
 
