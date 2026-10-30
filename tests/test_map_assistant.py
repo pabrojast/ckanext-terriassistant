@@ -118,6 +118,28 @@ def test_catalog_resource_pagination_does_not_drop_resources(service):
     assert second["next_cursor"] is None
 
 
+def test_search_hydrates_omitted_private_resources_with_user_permissions(service, monkeypatch):
+    s = service
+    package = {"id": "private-map", "resources": [{"id": "private-resource"}],
+               "spatial": {"type": "Point", "coordinates": [1, 1]}}
+    calls = []
+    def show(context, params):
+        calls.append((context, params))
+        return package
+    s.tk.get_action = lambda name: show if name == "package_show" else lambda *args: {
+        "count": 1, "results": [{**package, "resources": []}]}
+    monkeypatch.setattr(s.sources, 'resource_for', lambda *args: ({"id": args[1]}, package))
+    result = s.sources.search("alice", "", organization="water", polygon=AREA)
+    assert [src["resource_id"] for src in result["sources"]] == ["private-resource"]
+    assert calls[0][0]["user"] == "alice"
+    assert calls[0][1] == {"id": "private-map"}
+    def denied(*args):
+        raise s.tk.NotAuthorized("Revoked")
+    s.tk.get_action = lambda name: denied if name == "package_show" else lambda *args: {
+        "count": 1, "results": [{**package, "resources": []}]}
+    assert s.sources.search("alice", "", organization="water", polygon=AREA)["sources"] == []
+
+
 def test_api_negotiates_edits_and_rechecks_unselected_map_resources(service, monkeypatch):
     s = service
     assert s.client.get(BASE + '/bootstrap').json["capabilities"]["map_editing"] == 1

@@ -93,6 +93,15 @@ def search(user_id, query, limit=10, polygon=None, formats=None, organization=No
         for index, package in enumerate(packages):
             position = start + index
             examined += 1
+            # CKAN search hooks can omit private resource lists from the indexed
+            # representation. Recover them only through the caller's authorized
+            # package action, never by trusting Solr visibility as download access.
+            if not package.get("resources"):
+                try:
+                    package = tk.get_action("package_show")(context, {"id": package["id"]})
+                except (tk.NotAuthorized, tk.ObjectNotFound):
+                    resource_offset = 0
+                    continue
             if area is not None:
                 extent = coverage(package)
                 if extent is None:

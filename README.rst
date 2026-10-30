@@ -150,7 +150,9 @@ model context and never added to the shared corpus.
 POST ``catalog/search`` accepts query, polygon, formats, organization, tags and a
 continuation cursor. It is authenticated, CSRF-protected and rate-limited. It uses
 CKAN ``package_search`` with ``extras.ext_bbox`` and the calling user's permissions,
-then intersects declared dataset coverage with the drawn polygon. It does not
+then intersects declared dataset coverage with the drawn polygon. If search hooks
+omit a private resource list, it is recovered through the calling user's authorized
+``package_show`` action; denied datasets remain excluded. It does not
 claim actual observations inside the area. Up to 100 candidate datasets and 20
 resource descriptors are considered per response; ``next_cursor`` continues both
 datasets and resources. Empty partial pages are not final no-results answers.
