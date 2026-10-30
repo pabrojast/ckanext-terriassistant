@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from jsonschema import Draft7Validator
 
-from ..terria_builder import validate_style_spec, build_overrides, _SPEC_KEYS
+from ..terria_builder import validate_style_spec, build_overrides, _SPEC_KEYS, ALLOWED_PALETTES
 
 
 def obj(properties, required=()):
@@ -42,10 +42,13 @@ EDIT = obj({
     "kind": dict(enum=["update_layer", "style_layer", "remove_layer", "move_layer", "zoom", "set_view", "set_date", "set_basemap", "add_ckan", "add_url"]),
     "rectangle": obj({key: dict(type="number", minimum=-180 if key in ("west", "east") else -90,
                                 maximum=180 if key in ("west", "east") else 90) for key in ("west", "south", "east", "north")}, ["west", "south", "east", "north"]),
-    "source_id": ID, "name": TEXT, "show": dict(type="boolean"),
+    "source_id": {**ID, "description": "For existing layers, copy map_context.layers[].id exactly. Required for style_layer and other layer edits. Never use layer_id or style_id."},
+    "name": TEXT, "show": dict(type="boolean"),
     "opacity": dict(type="number", minimum=0, maximum=1),
     "show_legend": dict(type="boolean"),
-    "style_spec": obj({key: {} for key in _SPEC_KEYS}),
+    "style_spec": obj({**{key: {} for key in sorted(_SPEC_KEYS)},
+                       "palette": dict(enum=sorted(ALLOWED_PALETTES)),
+                       "color_method": dict(enum=["continuous", "bins", "categories", "constant"])}),
     "raster_style": obj({
         "palette": dict(enum=COG_PALETTES),
         "minimum": dict(type="number"), "maximum": dict(type="number"),
