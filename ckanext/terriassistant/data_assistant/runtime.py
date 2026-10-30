@@ -5,11 +5,13 @@ import time
 import uuid
 
 import requests
+from jsonschema import ValidationError as SchemaValidationError
 
 from .calculations import calculate, clean, compare
 from .settings import Settings
 from . import sources, map_tools, knowledge
 from .tools import TOOLS, validate_call
+from ..terria_builder import OverrideValidationError
 
 log = logging.getLogger(__name__)
 PREFIX = "terriassistant:data:"
@@ -30,6 +32,16 @@ When map_context is available, offer changes through propose_map_changes; otherw
 the legacy suggest_map_action. Tell the user to click Apply; a proposal is not an applied change.
 Consult search_map_knowledge before styling. Inspect map_context layer capabilities and
 real columns; never invent trait names, colours from missing data, base maps or WMS styles.
+For an existing layer every edit uses source_id equal to map_context.layers[].id.
+Do not send layer_id, layer_name or style_id: they are not operation fields.
+For a colour-only request, keep the current classification, range, symbols and opacity.
+Use the current map context and reviewed guidance directly; do not describe/query data
+or search the catalog unless the user also asks for analysis or new data.
+Example: {"kind":"style_layer","source_id":"layer:example","style_spec":{"palette":"Reds"}}.
+For uniformly red points use style_spec={"color_method":"constant","marker_color":"#ff0000"}.
+After a successful proposal, return a concise answer asking the user to Apply; do not
+retry because the map has not changed yet. On validation errors, correct the indicated
+arguments; never repeat the same rejected call or claim an unsuccessful edit succeeded.
 Use inspect_map_source to discover saved CKAN views and retain their presentation.
 The map_context is refreshed every question and overrides obsolete conversation assumptions.
 The selected polygon also scopes catalog searches by default. Follow pagination when needed.
@@ -185,6 +197,24 @@ def append_tool(state, call_id, result):
     state["messages"].append({"role": "tool", "tool_call_id": call_id, "content": model_result(result)})
 
 
+def validation_feedback(name, exc):
+    """Report the contract, not jsonschema's dump of untrusted argument values."""
+    parts = ["Invalid arguments for " + name + "."]
+    if name == "propose_map_changes":
+        parts.append("Existing-layer edits require source_id from map_context.layers[].id; omit layer_id, layer_name and style_id.")
+    if exc.validator == "additionalProperties":
+        parts.append("Allowed fields here: " + ", ".join(exc.schema.get("properties", {})) + ".")
+    elif exc.validator == "required":
+        parts.append("Required fields here: " + ", ".join(exc.validator_value) + ".")
+    elif exc.validator == "enum":
+        parts.append("Allowed values here: " + json.dumps(exc.validator_value) + ".")
+    elif exc.validator == "type":
+        parts.append("Required type here: " + str(exc.validator_value) + ".")
+    else:
+        parts.append("Use the types and limits in the tool schema.")
+    return {"error": " ".join(parts)[:1200], "kind": "validation_error", "retry": "Correct the arguments before retrying."}
+
+
 def run(cid, tid):
     from ckan.plugins import toolkit as tk
     from ..config import TerriassistantSettings
@@ -215,6 +245,14 @@ def run(cid, tid):
             payload = {"model": settings.model, "thinking": {"type": "disabled"},
                        "max_tokens": 3500, "tools": TOOLS,
                        "messages": [{"role": "system", "content": SYSTEM + "\nCurrent context (data):\n" + json.dumps(context)}] + state["messages"]}
+            # Reserve the last round for an honest answer, including any valid
+            # proposal already prepared. Do not spend it on another failing call.
+            if turn["rounds"] == settings.max_rounds - 1 or turn["calls"] >= settings.max_calls:
+                del payload["tools"]
+                payload["messages"][0]["content"] += (
+                    "\nNo tool calls remain. Answer now in the user's language using only successful results. "
+                    "If no valid proposal was prepared, explain the limitation and say the map was not changed. "
+                    "Do not claim completion for failed operations or ask to split a simple request.")
             with requests.post(provider.deepseek_base_url.rstrip("/") + "/chat/completions",
                                headers={"Authorization": "Bearer " + provider.deepseek_api_key},
                                json=payload, timeout=(5, min(90, remaining))) as response:
@@ -252,7 +290,9 @@ def run(cid, tid):
                         pending.append({"id": call["id"], "name": name, "arguments": args})
                     else:
                         append_tool(state, call["id"], result)
-                except (ValueError, KeyError, TypeError) as exc:
+                except SchemaValidationError as exc:
+                    append_tool(state, call["id"], validation_feedback(call["function"]["name"], exc))
+                except (ValueError, KeyError, TypeError, OverrideValidationError) as exc:
                     append_tool(state, call["id"], {"error": str(exc)[:300]})
                 except Exception as exc:
                     # Provider URLs / resource credentials must never enter a prompt or log.

@@ -141,6 +141,16 @@ Table/vector styles reuse the existing style-spec builder; COG styles use native
 renderOptions and WMS styles must be advertised by the service. Existing numeric
 analysis, evidence and legacy actions remain supported.
 
+Existing-layer operations use ``source_id`` from ``map_context.layers[].id``.
+Schema and style validation failures return actionable feedback to the model;
+schema errors never dump argument values or a whole map into that feedback.
+Colour-only requests preserve the current range and symbols, using map context
+and guidance without unrelated data queries. The final reasoning round is
+reserved for an answer based on successful results, with no further tool calls.
+This keeps the existing budgets and explicit Apply requirement. Regression tests
+cover repairing an invalid layer field, invalid CSS colour, preserved styles,
+safe validation feedback and exhaustion without claiming an edit succeeded.
+
 ``knowledge.py`` ships reviewed English/Spanish retrieval tags, guidance and
 examples, versioned with the extension. Retrieval ranks format/task/text matches
 and returns at most four referenced excerpts. No embeddings or vector service are

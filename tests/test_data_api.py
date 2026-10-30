@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 import types
 from unittest.mock import Mock
@@ -217,3 +218,103 @@ def test_provider_failure_is_safe(service, monkeypatch):
     turn = s.client.get(BASE + '/turns/' + tid).json
     assert turn['status'] == 'error' and 'DeepSeek' in turn['error']
     assert not s.redis.exists(s.runtime.PREFIX + 'active:alice')
+
+
+def colour_turn(s):
+    cid, headers = setup_conversation(s)
+    context = {'revision': 'map-snapshot', 'basemaps': [], 'layers': [{
+        'id': 'layer:sample', 'name': 'Water quality', 'type': 'csv',
+        'capabilities': ['styles', 'activeStyle', 'legends', 'table_style'],
+        'columns': [{'name': 'value', 'type': 'scalar'}],
+        'traits': {'activeStyle': 'terriassistant', 'styles': [{
+            'id': 'terriassistant', 'color': {'mapType': 'continuous', 'colorColumn': 'value',
+                'colorPalette': 'Greens', 'minimumValue': 0, 'maximumValue': 5},
+            'point': {'null': {'marker': 'circle', 'rotation': 15}}, 'pointSize': {'nullSize': 13}}]}
+    }]}
+    response = s.client.post(BASE + f'/conversations/{cid}/turns', headers=headers, json={
+        'question': 'cambia colores a rojo', 'request_id': 'colour-request',
+        'sources': [{'id': 'layer:sample', 'name': 'Water quality', 'format': 'csv'}],
+        'map_context': context})
+    assert response.status_code == 202
+    return cid, response.json['id']
+
+
+def map_completion(arguments, call_id='proposal-call'):
+    return {'role': 'assistant', 'tool_calls': [{'id': call_id, 'type': 'function',
+        'function': {'name': 'propose_map_changes', 'arguments': json.dumps(arguments)}}]}
+
+
+def provider_response(message):
+    response = Mock(status_code=200)
+    response.json.return_value = {'choices': [{'finish_reason': 'stop', 'message': message}]}
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    return response
+
+
+@pytest.mark.parametrize('bad_edit,expected_error', [
+    ({'kind': 'style_layer', 'layer_id': 'layer:sample', 'style_id': 'terriassistant',
+      'style_spec': {'palette': 'Reds'}}, 'source_id'),
+    ({'kind': 'style_layer', 'source_id': 'layer:sample',
+      'style_spec': {'marker_color': 'very red'}}, 'valid CSS color'),
+])
+def test_colour_validation_can_be_repaired_without_exhausting_budget(service, monkeypatch, bad_edit, expected_error):
+    s = service
+    cid, tid = colour_turn(s)
+    calls = []
+    good = {'title': 'Tonos rojos', 'operations': [
+        {'kind': 'style_layer', 'source_id': 'layer:sample', 'style_spec': {'palette': 'Reds'}}]}
+    def post(url, **kwargs):
+        calls.append(kwargs['json'])
+        if len(calls) == 1:
+            return provider_response(map_completion({'title': 'Rojo', 'operations': [bad_edit]}, 'invalid'))
+        if len(calls) == 2:
+            feedback = json.loads(kwargs['json']['messages'][-1]['content'])
+            assert expected_error in feedback['error']
+            assert 'Data inaccessible' not in feedback['error']
+            return provider_response(map_completion(good, 'corrected'))
+        return provider_response({'role': 'assistant', 'content': 'Propuesta lista. Pulsa Aplicar.'})
+    monkeypatch.setattr(s.runtime.requests, 'post', post)
+    s.runtime.run(cid, tid)
+    turn = s.client.get(BASE + '/turns/' + tid).json
+    assert turn['status'] == 'completed' and len(calls) == 3
+    assert len(turn['proposals']) == 1
+    style = turn['proposals'][0]['operations'][0]['traits']['styles'][-1]
+    assert style['color']['colorPalette'] == 'Reds'
+    assert (style['color']['minimumValue'], style['color']['maximumValue']) == (0, 5)
+    assert style['point']['null']['rotation'] == 15 and style['pointSize']['nullSize'] == 13
+    assert s.runtime.get(cid)['map_context']['layers'][0]['traits']['styles'][0]['color']['colorPalette'] == 'Greens'
+    assert not s.redis.exists(s.runtime.PREFIX + 'active:alice')
+
+
+def test_last_round_returns_an_honest_answer_without_more_tools(service, monkeypatch):
+    s = service
+    s.tk.config['ckanext.terriassistant.data_max_rounds'] = 3
+    cid, tid = colour_turn(s)
+    payloads = []
+    def post(url, **kwargs):
+        payload = kwargs['json']
+        payloads.append(payload)
+        if 'tools' in payload:
+            return provider_response(map_completion({'title': 'Rojo', 'operations': [
+                {'kind': 'style_layer', 'layer_id': 'layer:sample', 'style_spec': {'palette': 'Reds'}}]}, str(len(payloads))))
+        return provider_response({'role': 'assistant', 'content': 'No pude preparar una propuesta válida. El mapa no cambió.'})
+    monkeypatch.setattr(s.runtime.requests, 'post', post)
+    s.runtime.run(cid, tid)
+    turn = s.client.get(BASE + '/turns/' + tid).json
+    assert turn['status'] == 'completed' and len(payloads) == 3
+    assert 'tools' not in payloads[-1] and not turn.get('proposals')
+    assert 'no cambió' in turn['answer']
+    assert not s.redis.exists(s.runtime.PREFIX + 'active:alice')
+
+
+def test_schema_feedback_never_dumps_argument_values(service):
+    from jsonschema import ValidationError
+    from ckanext.terriassistant.data_assistant.tools import validate_call
+    with pytest.raises(ValidationError) as captured:
+        validate_call('propose_map_changes', {'title': 'Red', 'operations': [{
+            'kind': 'style_layer', 'source_id': {'token': 'private-token-value'},
+            'style_spec': {'palette': 'Reds'}}]})
+    result = service.runtime.validation_feedback('propose_map_changes', captured.value)
+    assert 'source_id' in result['error'] and 'string' in result['error']
+    assert 'private-token-value' not in json.dumps(result)

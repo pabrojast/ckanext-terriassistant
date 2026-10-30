@@ -6,16 +6,16 @@ they never enter this shared corpus. References point to this fork's contracts.
 import re
 import unicodedata
 
-VERSION = "2026-10-30.1"
+VERSION = "2026-10-30.2"
 DOCUMENTS = [
     dict(id="K1", title="Map composition / Composición del mapa", types=[],
          tags="layers capas orden ordenar visibility visibilidad base mapa zoom encuadre opacity opacidad rename nombre",
          source="terriajs/lib/Models/DataAssistant/MapEdits.ts",
          text="Use propose_map_changes with existing source IDs. update_layer accepts name, show, opacity (0..1) and show_legend. move_layer index is zero-based workbench order. remove_layer only removes from this map. set_basemap must use an advertised basemap_id; zoom uses a loaded layer. Changes require Apply and can be undone. For multiple changes, propose one batch. Never claim it is applied until the next map context reflects it."),
     dict(id="K2", title="Table and vector colour / Colores de tablas y vectores", types=["csv", "geojson", "shp"],
-         tags="color colour colores palette paleta categories categorias intervalos bins puntos point size tamaño leyenda legend",
+         tags="color colour colores rojo red azul blue palette paleta categories categorias intervalos bins puntos point size tamaño leyenda legend",
          source="ckanext-terriassistant/ckanext/terriassistant/terria_builder.py",
-         text="Inspect column names/types first. style_layer.style_spec uses color_by, color_method (continuous/bins/categories/constant), palette, bins, bin_maximums, category_colors, min_value, max_value, null_color, null_label, size_by, size_min and size_max. The builder emits styles[]/activeStyle. Never invent category values or data minima. Use query_data for actual ranges. Example: style_spec={color_by:'value',color_method:'continuous',palette:'Blues'}, legend_title='Water level'. Applicable only when table_style is advertised."),
+         text="Use map_context column names/types and current active style. A colour-only change needs no describe_source/query_data or catalog search. Keep the existing range and symbols unless explicitly asked to change them. Red palette example: {kind:'style_layer',source_id:'layer:example',style_spec:{palette:'Reds'}}. Uniform red points: style_spec={color_method:'constant',marker_color:'#ff0000'}. source_id must match a current layer ID; layer_id and style_id are invalid fields. For new data-driven styles use color_by, color_method (continuous/bins/categories/constant), palette, bins, bin_maximums, category_colors, min_value, max_value, null_color, null_label, size_by and size_min/size_max. The builder emits styles[]/activeStyle. Never invent categories or data minima; query_data is required when computing a NEW range. Applicable only when table_style is advertised."),
     dict(id="K3", title="Vector geometry / Geometría vectorial", types=["geojson", "shp", "wfs"],
          tags="polygon poligono line linea outline contorno marker simbolo fill relleno stroke",
          source="terriajs/lib/Traits/TraitsClasses/GeoJsonTraits.ts",
