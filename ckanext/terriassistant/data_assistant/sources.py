@@ -34,9 +34,11 @@ def resource_for(user_id, resource_id, download=False):
 
 
 def descriptor(resource, package):
+    organization = package.get("organization") or {}
     return {"id": "ckan:" + resource["id"], "resource_id": resource["id"],
             "dataset_id": package["id"], "name": str(resource.get("name") or resource["id"])[:200],
             "format": str(resource.get("format") or "")[:50],
+            "organization": str(organization.get("title") or organization.get("name") or "")[:200],
             "dataset_name": str(package.get("name") or package["id"])[:200],
             "dataset_title": str(package.get("title") or package.get("name") or package["id"])[:200],
             "url": "/dataset/" + package["id"] + "/resource/" + resource["id"],

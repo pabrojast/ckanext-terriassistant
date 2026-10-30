@@ -164,7 +164,8 @@ then intersects declared dataset coverage with the drawn polygon. If search hook
 omit a private resource list, it is recovered through the calling user's authorized
 ``package_show`` action; denied datasets remain excluded. It does not
 claim actual observations inside the area. Up to 100 candidate datasets and 20
-resource descriptors are considered per response; ``next_cursor`` continues both
+resource descriptors are considered per response. Descriptors include the authorized
+parent dataset title and organization display name for catalogue results; ``next_cursor`` continues both
 datasets and resources. Empty partial pages are not final no-results answers.
 Stored coverage follows GeoJSON antimeridian semantics; drawn polygons are
 unwrapped and split. Missing/invalid coverage cannot establish an intersection.
@@ -176,4 +177,6 @@ session authorization. It requires the matching ``terria_view`` release with
 ``saved_config`` support. The assistant can add user-supplied HTTP(S) data URLs and
 local files using the browser's existing loaders. Local files remain local; share
 links omit local/private/non-shareable layers. This release does not create
-datasets or save resource views.
+datasets or save resource views. The companion Terria UI exposes catalogue search
+(including polygon drawing) under Add data, independently of AI conversations.
+File and URL imports use My data; map links use Share.
