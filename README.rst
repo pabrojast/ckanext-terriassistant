@@ -133,6 +133,14 @@ prefix remain compatible. Bootstrap advertises ``capabilities.map_editing=1`` an
 with layer capabilities, presentation, columns, dates, basemaps and camera. It is
 refreshed each turn and excludes credentials, source URLs and raw files.
 
+Table clients send the effective active style, including inherited defaults,
+instead of every automatically generated column style. Columns referenced by that
+style take priority within the existing 200-column limit; omitted styles remain
+local. The map-context limit remains 200000 characters as serialized by
+``json.dumps(context, allow_nan=False)``. A valid context over that limit returns
+HTTP 413 with an actionable ``error`` string before allocating a turn or enqueuing
+provider work. The same conversation can retry after reducing its context.
+
 New tools are ``search_map_knowledge``, ``inspect_map_source`` and
 ``propose_map_changes``. Proposals return an ID, base revision and typed operations;
 they do not mutate CKAN or the map. The client validates, applies on user click,

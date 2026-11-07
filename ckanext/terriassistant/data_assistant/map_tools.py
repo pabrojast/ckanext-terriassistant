@@ -64,10 +64,14 @@ EDIT = obj({
 PROPOSAL = obj({"title": TEXT, "operations": dict(type="array", minItems=1, maxItems=20, items=EDIT)}, ["title", "operations"])
 
 
+class MapContextTooLarge(ValueError):
+    """A valid map context exceeds the existing serialized context budget."""
+
+
 def validate_context(context):
     Draft7Validator(CONTEXT).validate(context)
     if len(json.dumps(context, allow_nan=False)) > 200000:
-        raise ValueError("Map context is too large; select fewer layers")
+        raise MapContextTooLarge("Map context is too large; remove some layers from the map and try again")
     ids = [layer["id"] for layer in context["layers"]]
     if len(set(ids)) != len(ids):
         raise ValueError("Duplicate map layer")
