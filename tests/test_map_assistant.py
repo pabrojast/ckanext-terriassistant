@@ -1,4 +1,5 @@
 import copy
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -28,6 +29,39 @@ def test_proposals_are_bound_to_context_and_preserve_unrelated_style():
     assert current["map_context"] == before
 
 
+def test_context_size_limit_remains_200000_characters():
+    context = state()["map_context"]
+    context["layers"][0]["traits"]["style"]["fill"] = ""
+    padding = 200000 - len(json.dumps(context, allow_nan=False))
+    context["layers"][0]["traits"]["style"]["fill"] = "x" * padding
+    assert map_tools.validate_context(context) is context
+    context["layers"][0]["traits"]["style"]["fill"] += "x"
+    with pytest.raises(map_tools.MapContextTooLarge):
+        map_tools.validate_context(context)
+
+
+def test_oversized_map_context_returns_actionable_413_before_enqueue_and_allows_retry(service):
+    s = service
+    cid, headers = setup_conversation(s)
+    context = state()["map_context"]
+    context["layers"][0]["traits"]["styles"] = [
+        {"id": "style" + str(i), "title": "x" * 1200} for i in range(200)
+    ]
+    request = {"request_id": "large-map", "question": "Change this layer's colours to red.",
+               "sources": [], "map_context": context}
+    response = s.client.post(BASE + f"/conversations/{cid}/turns", headers=headers, json=request)
+    assert response.status_code == 413
+    assert response.json == {"error": "Map context is too large; remove some layers from the map and try again"}
+    assert "no-store" in response.headers["Cache-Control"]
+    assert not s.redis.exists(s.runtime.PREFIX + "active:alice")
+    assert "turn" not in s.runtime.get(cid)
+    s.tk.enqueue_job.assert_not_called()
+    request["map_context"] = state()["map_context"]
+    response = s.client.post(BASE + f"/conversations/{cid}/turns", headers=headers, json=request)
+    assert response.status_code == 202
+    s.tk.enqueue_job.assert_called_once()
+
+
 def test_table_style_preserves_geometry_and_rejects_invented_columns():
     current = state()
     edit = {"kind": "style_layer", "source_id": "layer:one", "style_spec": {"color_by": "value", "palette": "Blues"}}
@@ -38,6 +72,34 @@ def test_table_style_preserves_geometry_and_rejects_invented_columns():
     edit["style_spec"]["color_by"] = "invented"
     with pytest.raises(ValueError, match="Unknown column"):
         map_tools.propose(current, {"title": "Wrong", "operations": [edit]})
+
+
+def test_compact_csv_context_can_propose_constant_red_without_losing_symbols():
+    current = state()
+    layer = current["map_context"]["layers"][0]
+    layer.update(type="csv", capabilities=list(map_tools.TRAITS) + ["table_style", "zoom"])
+    layer["traits"] = {
+        "activeStyle": "default", "styles": [{
+            "id": "default", "longitudeColumn": "longitude", "latitudeColumn": "latitude",
+            "color": {"minimumValue": 0, "maximumValue": 100},
+            "point": {"null": {"rotation": 15, "width": 13}},
+            "pointSize": {"nullSize": 17}
+        }]
+    }
+    before = copy.deepcopy(layer)
+    map_tools.propose(current, {"title": "Red points", "operations": [{
+        "kind": "style_layer", "source_id": "layer:one",
+        "style_spec": {"color_method": "constant", "marker_color": "#ff0000"}
+    }]})
+    proposal = current["turn"]["proposals"][0]
+    traits = proposal["operations"][0]["traits"]
+    active = next(s for s in traits["styles"] if s["id"] == traits["activeStyle"])
+    assert active["color"]["mapType"] == "constant"
+    assert active["color"]["nullColor"] == "#ff0000"
+    assert active["longitudeColumn"] == "longitude"
+    assert active["point"]["null"] == {"rotation": 15, "width": 13}
+    assert active["pointSize"]["nullSize"] == 17
+    assert layer == before
 
 
 def test_raster_uses_native_traits_and_keeps_nodata():

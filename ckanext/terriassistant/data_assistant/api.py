@@ -103,6 +103,8 @@ def private(response):
 def error(exc):
     if isinstance(exc, HTTPException):
         return jsonify(error=exc.description), exc.code
+    if isinstance(exc, map_tools.MapContextTooLarge):
+        return jsonify(error=str(exc)), 413
     if isinstance(exc, tk.NotAuthorized):
         return jsonify(error="Access to these data is no longer permitted"), 403
     if isinstance(exc, tk.ObjectNotFound):
