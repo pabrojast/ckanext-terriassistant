@@ -9,6 +9,7 @@ from .api import _get_controller, terriassistant_api
 from .config import TerriassistantSettings
 from . import resource_utils
 from . import terria_builder as tb
+from .view_creation import ensure_default_view
 
 
 PLUGIN_NAME = "terriassistant"
@@ -167,8 +168,14 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
             "ignore_auth": True,
         }
         try:
-            toolkit.get_action("resource_view_create")(create_context, create_payload)
-            return next_action(context, data_dict)
+            return ensure_default_view(
+                context["model"].meta.engine,
+                resource["id"],
+                lambda: next_action(context, data_dict),
+                lambda: toolkit.get_action("resource_view_create")(
+                    create_context, create_payload
+                ),
+            )
         except Exception:
             return existing_views
 
