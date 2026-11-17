@@ -9,7 +9,7 @@ from .api import _get_controller, terriassistant_api
 from .config import TerriassistantSettings
 from . import resource_utils
 from . import terria_builder as tb
-from .view_creation import ensure_default_view
+from .view_order import prefer_standard_map
 
 
 PLUGIN_NAME = "terriassistant"
@@ -129,55 +129,9 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
     # IActions
     @toolkit.chained_action
     def resource_view_list(self, next_action, context, data_dict):
-        existing_views = next_action(context, data_dict)
-        try:
-            resource_id = data_dict.get("id")
-            if "model" not in context or "session" not in context:
-                import ckan.model as model
-
-                context.setdefault("model", model)
-                context.setdefault("session", model.Session)
-            resource = toolkit.get_action("resource_show")(context, {"id": resource_id})
-        except Exception:
-            return existing_views
-
-        has_view = any(
-            isinstance(view, dict) and view.get("view_type") == PLUGIN_NAME
-            for view in existing_views
-        )
-        if has_view or resource is None:
-            return existing_views
-        if not self.settings.can_view_resource(resource):
-            return existing_views
-
-        create_payload = {
-            "resource_id": resource["id"],
-            "title": self.settings.default_title,
-            "description": "",
-            "view_type": PLUGIN_NAME,
-            "terria_state_json": "",
-            "terria_state_version": "1",
-            "terria_summary": "",
-            "saved_at": "",
-            "saved_by": "",
-        }
-        create_context = {
-            "model": context.get("model"),
-            "session": context.get("session"),
-            "user": "ckan.system",
-            "ignore_auth": True,
-        }
-        try:
-            return ensure_default_view(
-                context["model"].meta.engine,
-                resource["id"],
-                lambda: next_action(context, data_dict),
-                lambda: toolkit.get_action("resource_view_create")(
-                    create_context, create_payload
-                ),
-            )
-        except Exception:
-            return existing_views
+        # Reads preserve existing view records and the caller's visibility filters.
+        # A legacy auto-created assistant must not displace the standard map.
+        return prefer_standard_map(next_action(context, data_dict))
 
     def get_actions(self):
         return {"resource_view_list": self.resource_view_list}

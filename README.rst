@@ -188,3 +188,12 @@ links omit local/private/non-shareable layers. This release does not create
 datasets or save resource views. The companion Terria UI exposes catalogue search
 (including polygon drawing) under Add data, independently of AI conversations.
 File and URL imports use My data; map links use Share.
+
+Resource preview defaults
+-------------------------
+
+Map Assistant is an optional, explicitly created resource view. Listing views
+does not create records or bypass CKAN permissions. If a legacy assistant is
+first and a conventional Terria view is available to the caller, Terria is
+presented first. Other preview defaults and saved view records are unchanged;
+existing Map Assistant tabs and explicit ``view_id`` links remain available.
