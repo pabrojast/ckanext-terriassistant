@@ -60,6 +60,7 @@ Configuration
 ::
 
    ckanext.terriassistant.default_title = Map Assistant
+   ckanext.terriassistant.view_enabled = true
    ckanext.terriassistant.terria_instance_url = https://ihp-wins.unesco.org/terria/
    ckanext.terriassistant.deepseek_api_key = your-api-key
    ckanext.terriassistant.deepseek_base_url = https://api.deepseek.com
@@ -76,6 +77,19 @@ Configuration
 
 ``deepseek_base_url`` accepts any OpenAI-compatible ``/chat/completions`` endpoint.
 Without ``deepseek_api_key`` the map still renders; the chat panel is shown disabled.
+
+Set ``ckanext.terriassistant.view_enabled = false`` to disable the optional
+**Map Assistant** resource-view tab and its legacy API. Its saved view records
+are retained but omitted from view lists and the new-view selector; old direct
+links return 404. Conventional Terria resource views and the separate **Ask the
+data** interface inside Terria retain their existing behavior and API. Keep the
+``terriassistant`` plugin loaded when using that interface. Changing this setting
+requires restarting CKAN so its blueprint registration is refreshed.
+
+The production-image check ``python tests/verify_view_disabled.py`` exercises
+both settings, the new-view selector, conventional Terria selection, old direct
+and embedded links, and blueprint registration using real CKAN/Flask with
+isolated actions. Run it with Docker networking disabled; no database is used.
 
 Notes
 =====

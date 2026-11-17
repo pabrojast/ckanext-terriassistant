@@ -40,7 +40,9 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
     # IBlueprint
     def get_blueprint(self):
         from .data_assistant.api import blueprint as data_api
-        return [terriassistant_api, data_api]
+        # The optional CKAN view and the assistant inside Terria are separate
+        # interfaces. Disabling the former must retain the latter's API.
+        return ([terriassistant_api] if self.settings.view_enabled else []) + [data_api]
 
     def logout(self):
         from .data_assistant.api import clear_session
@@ -53,16 +55,20 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
             "title": toolkit._("Map Assistant"),
             "default_title": toolkit._(self.settings.default_title),
             "icon": "globe",
-            "always_available": True,
+            "always_available": self.settings.view_enabled,
             "filterable": False,
             "iframed": False,
             "schema": self.settings.schema_info(toolkit),
         }
 
     def can_view(self, data_dict):
-        return self.settings.can_view_resource((data_dict or {}).get("resource"))
+        return self.settings.view_enabled and self.settings.can_view_resource((data_dict or {}).get("resource"))
 
     def setup_template_variables(self, context, data_dict):
+        if not self.settings.view_enabled:
+            # Also reject embedded previews supplied as resource_view JSON,
+            # which bypass resource_view_show in CKAN's embedded-view route.
+            toolkit.abort(404, toolkit._("Resource view not found"))
         view = data_dict["resource_view"]
         resource = data_dict["resource"]
         package = data_dict["package"]
@@ -127,7 +133,18 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
     def resource_view_list(self, next_action, context, data_dict):
         # Reads preserve existing view records and the caller's visibility filters.
         # A legacy auto-created assistant must not displace the standard map.
-        return prefer_standard_map(next_action(context, data_dict))
+        views = next_action(context, data_dict)
+        if not self.settings.view_enabled:
+            return [view for view in views if view.get("view_type") != PLUGIN_NAME]
+        return prefer_standard_map(views)
+
+    @toolkit.chained_action
+    def resource_view_show(self, next_action, context, data_dict):
+        view = next_action(context, data_dict)
+        if not self.settings.view_enabled and view.get("view_type") == PLUGIN_NAME:
+            raise toolkit.ObjectNotFound("Resource view not found")
+        return view
 
     def get_actions(self):
-        return {"resource_view_list": self.resource_view_list}
+        return {"resource_view_list": self.resource_view_list,
+                "resource_view_show": self.resource_view_show}

@@ -57,6 +57,7 @@ def _format_supported(format_value: str) -> bool:
 @dataclass(frozen=True)
 class TerriassistantSettings:
     plugin_name: str = "terriassistant"
+    view_enabled: bool = True
     default_title: str = "Map Assistant"
     site_url: str = ""
     terria_instance_url: str = "https://ihp-wins.unesco.org/terria/"
@@ -83,6 +84,7 @@ class TerriassistantSettings:
         if terria_url and not terria_url.endswith("/"):
             terria_url += "/"
         return cls(
+            view_enabled=_as_bool(config.get(p + "view_enabled"), cls.view_enabled),
             default_title=str(config.get(p + "default_title", cls.default_title)),
             site_url=str(config.get("ckan.site_url", "")).rstrip("/"),
             terria_instance_url=terria_url,
