@@ -5,6 +5,7 @@ import ipaddress
 import json
 import re
 import socket
+from contextlib import contextmanager
 from urllib.parse import urljoin, urlsplit
 
 import pandas as pd
@@ -204,15 +205,16 @@ def public_addresses(host, port):
     return addresses
 
 
-def download(url, maximum):
-    """Pin DNS for each redirect; reject loopback, private networks and URL credentials."""
+@contextmanager
+def open_public_resource(url, timeout_seconds=30):
+    """Open a public HTTP stream, pinning DNS and checking every redirect."""
     for _ in range(5):
         parsed = urlsplit(url)
         if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("Unsupported resource address")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         address = public_addresses(parsed.hostname, port)[0]
-        kwargs = dict(port=port, timeout=urllib3.Timeout(connect=5, read=30), maxsize=1)
+        kwargs = dict(port=port, timeout=urllib3.Timeout(connect=5, read=timeout_seconds), maxsize=1)
         if parsed.scheme == "https":
             pool = urllib3.HTTPSConnectionPool(address, assert_hostname=parsed.hostname,
                                               server_hostname=parsed.hostname, **kwargs)
@@ -227,21 +229,33 @@ def download(url, maximum):
                                     "Accept-Encoding": "identity"}, preload_content=False,
                                     redirect=False, retries=False)
             if response.status in (301, 302, 303, 307, 308):
-                url = urljoin(url, response.headers.get("Location", ""))
+                location = response.headers.get("Location")
+                if not location:
+                    raise ValueError("The resource redirect has no destination")
+                url = urljoin(url, location)
                 continue
             if response.status != 200:
                 raise ValueError("The resource download failed")
-            if int(response.headers.get("Content-Length", "0")) > maximum:
-                raise ValueError("Resource exceeds the download limit")
-            raw = response.read(maximum + 1)
-            if len(raw) > maximum:
-                raise ValueError("Resource exceeds the download limit")
-            return raw
+            yield response, url
+            return
         finally:
             if response is not None:
                 response.close()
             pool.close()
     raise ValueError("Too many resource redirects")
+
+
+def download(url, maximum, include_metadata=False):
+    """Read a bounded public resource using the shared pinned HTTP stream."""
+    with open_public_resource(url) as (response, final_url):
+        if int(response.headers.get("Content-Length", "0")) > maximum:
+            raise ValueError("Resource exceeds the download limit")
+        raw = response.read(maximum + 1)
+        if len(raw) > maximum:
+            raise ValueError("Resource exceeds the download limit")
+        if include_metadata:
+            return raw, final_url, dict(response.headers)
+        return raw
 
 
 def load_frame(user_id, resource_id, settings):

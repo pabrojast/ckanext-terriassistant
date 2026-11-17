@@ -31,6 +31,7 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
     def update_config(self, config_):
         toolkit.add_template_directory(config_, "templates")
         toolkit.add_public_directory(config_, "public")
+        toolkit.add_resource("public/terriassistant", "terriassistant")
 
     # IConfigurable
     def configure(self, config):
@@ -71,13 +72,8 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
         encoded_config = ""
         terria_type = "csv"
         try:
-            ctx = {
-                "view": view,
-                "resource": resource,
-                "package": package,
-                "user_context": controller._user_context(),
-            }
-            profile = controller.data_service.get_profile(resource, controller._fetch_context())
+            ctx = controller._load_view_context(view_id)
+            profile = controller._profile(ctx)
             terria_type = profile.get("terria_type") or "csv"
             raw_spec = None
             serialized = str(view.get("terria_state_json") or "").strip()

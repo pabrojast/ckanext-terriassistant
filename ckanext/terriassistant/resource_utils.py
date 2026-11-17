@@ -17,7 +17,7 @@ def _token_secret() -> bytes:
         value = toolkit.config.get(key) if toolkit.config else None
         if value:
             return str(value).encode("utf-8")
-    return b"ckanext-terriassistant-proxy-fallback"
+    raise RuntimeError("No secret is configured for resource proxy tokens")
 
 
 def generate_resource_token(resource_id: str, ttl_seconds: int) -> str:
@@ -42,8 +42,29 @@ def verify_resource_token(resource_id: str, token: str) -> bool:
     if expiry < int(time.time()):
         return False
     payload = f"{resource_id}|{expiry}".encode("utf-8")
-    expected = hmac.new(_token_secret(), payload, hashlib.sha256).hexdigest()
+    try:
+        secret = _token_secret()
+    except RuntimeError:
+        return False
+    expected = hmac.new(secret, payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(signature, expected)
+
+
+def user_may_download(context: dict, resource_id: str) -> bool:
+    """A metadata/preview grant is not permission to expose source rows."""
+    auth_context = {"user": context.get("user"), "auth_user_obj": context.get("auth_user_obj")}
+    for name in ("datashare_resource_download", "resource_show"):
+        try:
+            toolkit.check_access(name, dict(auth_context), {"id": resource_id})
+            return True
+        except toolkit.NotAuthorized:
+            return False
+        except ValueError:
+            # CKAN raises ValueError when this optional auth function is absent.
+            continue
+        except Exception:
+            return False
+    return False
 
 
 def to_absolute_url(url: str, site_url: str) -> str:
@@ -104,9 +125,17 @@ def get_resource_url(
     without depending on the storage backend's CORS configuration.
     """
     resource_url = resource.get("url") or ""
-    is_private = package.get("private") is True
+    access_level = package.get("access_level")
+    if not access_level:
+        access_level = next((extra.get("value") for extra in (package.get("extras") or [])
+                             if isinstance(extra, dict) and extra.get("key") == "access_level"), None)
+    is_private = (package.get("private") is True or package.get("capacity") == "private"
+                  or str(access_level or "public").strip().lower() != "public")
     is_logged = bool(user_context.get("user"))
     is_upload = resource.get("url_type") == "upload" or resource_url.startswith("/")
+
+    if resource.get("id") and not user_may_download(user_context, resource["id"]):
+        raise toolkit.NotAuthorized("Downloading this resource is not permitted")
 
     if is_private and is_logged and is_upload and resource.get("id"):
         try:

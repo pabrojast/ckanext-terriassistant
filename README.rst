@@ -14,7 +14,7 @@ reuses the iframe ``#start=`` embedding approach of ``ckanext-terria_view``.
 How it works
 ============
 
-* Registers a ``terriassistant`` resource view (auto-created for supported resources).
+* Registers an optional ``terriassistant`` resource view, created explicitly for supported resources.
 * ``setup_template_variables`` builds a TerriaJS ``initSources`` catalog config pointing
   at the resource and renders it in an iframe via ``<terria_url>#start=<encoded JSON>``.
 * The chat sends your message to a configurable OpenAI-compatible / DeepSeek endpoint.
@@ -197,3 +197,42 @@ does not create records or bypass CKAN permissions. If a legacy assistant is
 first and a conventional Terria view is available to the caller, Terria is
 presented first. Other preview defaults and saved view records are unchanged;
 existing Map Assistant tabs and explicit ``view_id`` links remain available.
+
+Frontend assets and interaction tests
+------------------------------------
+
+Map Assistant uses CKAN webassets bundles (``terriassistant/assistant-css`` and
+``terriassistant/assistant-js``). The published, versioned URLs are under
+``/webassets/terriassistant/`` so they do not collide with Terria's ``/terria``
+route. API links are generated with CKAN's URL helper and respect a site prefix.
+Chat requires an active account; the server's bootstrap controls chat/save
+availability and supplies the CSRF token used by POST requests.
+
+The browser serializes chat/save/reset operations. Reset to default previews a
+recoverable draft; only Save changes the stored resource view. Browser storage
+failures do not stop map loading or server saves. Chat and local drafts are
+scoped to the current account and view. Older unscoped browser records are
+retained locally but are not automatically restored into another account.
+On narrow screens, only the message history is height-limited; the composer and
+login/draft/warning notices remain reachable by scrolling the page.
+
+The DOM tests execute the shipped JavaScript against the actual template and
+cover delayed loading, anonymous controls, CSRF headers, concurrent submits,
+explicit save/reset, storage failure, account isolation, malformed responses and
+bounded conversation requests. With Node.js 22.13 or newer::
+
+    npm ci --ignore-scripts
+    npm test
+
+The npm packages are development-only test dependencies; the CKAN runtime does
+not depend on Node.js.
+
+In an installed CKAN environment, verify the real template tags, plugin asset
+registration, generated versions, site-prefix URLs, response MIME types and
+bundle contents without a database or external services::
+
+    python tests/verify_webassets.py
+
+This uses CKAN's asset pipeline and Flask's test client; it does not start CKAN's
+full middleware stack. Browser and deployed route checks are still required for
+the reverse proxy and responsive layout.

@@ -1,12 +1,12 @@
-<link rel="stylesheet" href="{{ h.url_for_static('/terriassistant/terriassistant.css') }}">
+{% asset 'terriassistant/assistant-css' %}
 
 <div
   id="terriassistant-app"
   class="ta-app"
   data-view-id="{{ view_id }}"
-  data-bootstrap-url="/api/terriassistant/view/{{ view_id }}/bootstrap"
-  data-chat-url="/api/terriassistant/view/{{ view_id }}/chat"
-  data-save-url="/api/terriassistant/view/{{ view_id }}/save"
+  data-bootstrap-url="{{ h.url_for('terriassistant_api.terriassistant_bootstrap', view_id=view_id) }}"
+  data-chat-url="{{ h.url_for('terriassistant_api.terriassistant_chat', view_id=view_id) }}"
+  data-save-url="{{ h.url_for('terriassistant_api.terriassistant_save', view_id=view_id) }}"
   data-terria-instance-url="{{ terria_instance_url }}"
 >
   <div class="ta-shell">
@@ -52,7 +52,8 @@
         </div>
       </div>
 
-      <div id="ta-warnings" class="ta-warnings"></div>
+      <div id="ta-warnings" class="ta-warnings" role="status"></div>
+      <p id="ta-login" class="ta-login ta-hidden"><a href="{{ h.url_for('user.login') }}">{{ _('Sign in to use the map assistant.') }}</a></p>
 
       <div id="ta-messages" class="ta-messages" aria-live="polite"></div>
 
@@ -68,11 +69,13 @@
             id="ta-input"
             class="ta-textarea"
             rows="3"
+            maxlength="8000"
+            disabled
             placeholder="{{ _('Example: color the points by population using a red palette with 5 bins') }}"
           ></textarea>
           <div class="ta-input-actions">
             <span id="ta-status" class="ta-status"></span>
-            <button type="submit" class="btn btn-primary" id="ta-send">
+            <button type="submit" class="btn btn-primary" id="ta-send" aria-label="{{ _('Send') }}" disabled>
               <span>{{ _('Send') }}</span>
               <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>
@@ -107,10 +110,10 @@
             <span>{{ _('Save') }}</span>
           </button>
           <div class="ta-toolbar-group" role="group">
-            <button type="button" class="btn btn-icon" id="ta-reset-saved" title="{{ _('Reset to saved') }}" aria-label="{{ _('Reset to saved') }}">
+            <button type="button" class="btn btn-icon" id="ta-reset-saved" disabled title="{{ _('Reset to saved') }}" aria-label="{{ _('Reset to saved') }}">
               <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
             </button>
-            <button type="button" class="btn btn-icon" id="ta-reset-default" title="{{ _('Reset to default styling') }}" aria-label="{{ _('Reset to default styling') }}">
+            <button type="button" class="btn btn-icon" id="ta-reset-default" disabled title="{{ _('Reset to default styling') }}" aria-label="{{ _('Reset to default styling') }}">
               <svg class="ta-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v4"/><path d="M5.6 5.6l2.8 2.8"/><path d="M3 12h4"/><path d="M5.6 18.4l2.8-2.8"/><path d="M12 21v-4"/><path d="M18.4 18.4l-2.8-2.8"/><path d="M21 12h-4"/><path d="M18.4 5.6l-2.8 2.8"/></svg>
             </button>
             <a class="btn btn-icon" id="ta-open-window" target="_blank" rel="noopener" href="{% if encoded_config %}{{ terria_instance_url }}#start={{ encoded_config }}{% else %}{{ terria_instance_url }}{% endif %}" title="{{ _('Open in a new window') }}" aria-label="{{ _('Open in a new window') }}">
@@ -139,4 +142,4 @@
   </div>
 </div>
 
-<script src="{{ h.url_for_static('/terriassistant/terriassistant.js') }}"></script>
+{% asset 'terriassistant/assistant-js' %}

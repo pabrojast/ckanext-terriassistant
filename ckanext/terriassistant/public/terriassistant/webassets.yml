@@ -1,0 +1,9 @@
+assistant-css:
+  output: terriassistant/css/terriassistant.css
+  contents:
+    - terriassistant.css
+
+assistant-js:
+  output: terriassistant/js/terriassistant.js
+  contents:
+    - terriassistant.js

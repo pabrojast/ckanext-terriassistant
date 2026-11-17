@@ -7,12 +7,14 @@ import re
 import warnings
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import pandas as pd
 import requests
+import urllib3
 
 from .config import TerriassistantSettings, _format_supported
+from .data_assistant.sources import download as download_public_resource
 
 
 class DataServiceError(Exception):
@@ -143,37 +145,88 @@ class DataService:
         if resource_url.startswith("/"):
             if not fetch_context.site_url:
                 raise DataFetchError("Cannot resolve relative resource URLs without ckan.site_url.")
-            resource_url = urljoin(fetch_context.site_url + "/", resource_url.lstrip("/"))
+            resource_url = urljoin(fetch_context.site_url.rstrip("/") + "/", resource_url)
 
-        headers = {"User-Agent": fetch_context.user_agent, "Accept": "*/*"}
-        if fetch_context.authorization:
-            headers["Authorization"] = fetch_context.authorization
-        if fetch_context.cookie_header:
-            headers["Cookie"] = fetch_context.cookie_header
+        def origin(url):
+            try:
+                parsed = urlparse(url)
+                if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password:
+                    return None
+                return parsed.scheme, parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
+            except ValueError:
+                return None
 
-        try:
-            response = requests.get(
-                resource_url,
-                headers=headers,
-                stream=True,
-                timeout=(5, fetch_context.timeout_seconds),
-                allow_redirects=True,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise DataFetchError("Could not fetch the resource.") from exc
+        site_origin = origin(fetch_context.site_url)
 
-        collected = bytearray()
-        limit = self.settings.max_resource_bytes
-        for chunk in response.iter_content(chunk_size=65536):
-            if not chunk:
-                continue
-            collected.extend(chunk)
-            if len(collected) > limit:
-                raise DataTooLargeError(
-                    "The resource exceeds the configured byte limit of {0} bytes.".format(limit)
-                )
-        return bytes(collected), response.url, response
+        def authorized_download(url):
+            # A resource editor cannot make a public URL impersonate a different
+            # protected resource or an arbitrary CKAN API endpoint with the
+            # visiting user's credentials.
+            path = unquote(urlparse(url).path)
+            if ("\\" in path or any(ord(char) < 32 or ord(char) == 127 for char in path)
+                    or any(part in (".", "..") for part in path.split("/"))
+                    or re.search(r"%(?:2e|2f|5c)", path, re.I)):
+                return False
+            prefix = urlparse(fetch_context.site_url).path.rstrip("/")
+            if prefix and not path.startswith(prefix + "/"):
+                return False
+            path = path[len(prefix):]
+            match = re.fullmatch(r"/(?:[a-z]{2}(?:_[A-Z]{2})?/)?dataset/[^/]+/resource/([^/]+)/download(?:/[^\r\n]*)?", path)
+            return bool(match and resource.get("id") and match.group(1) == str(resource["id"]))
+
+        send_credentials = site_origin is not None and origin(resource_url) == site_origin and authorized_download(resource_url)
+        for _ in range(6):
+            target_origin = origin(resource_url)
+            if target_origin is None:
+                raise DataFetchError("The resource must use an HTTP(S) URL without embedded credentials.")
+            if target_origin != site_origin:
+                # Reuse the bounded downloader that pins public DNS addresses
+                # on every redirect. It never receives browser credentials.
+                try:
+                    raw, final_url, response_headers = download_public_resource(
+                        resource_url, self.settings.max_resource_bytes, include_metadata=True)
+                except (ValueError, OSError, urllib3.exceptions.HTTPError) as exc:
+                    raise DataFetchError("Could not fetch a public resource within the download limit.") from exc
+                response = requests.Response()
+                response.url = final_url
+                response.headers.update(response_headers)
+                response.encoding = requests.utils.get_encoding_from_headers(response.headers)
+                return raw, final_url, response
+            # Never hand browser credentials to external resources, including
+            # redirects from an authorized CKAN download to object storage.
+            send_credentials = send_credentials and target_origin == site_origin and authorized_download(resource_url)
+            headers = {"User-Agent": fetch_context.user_agent, "Accept": "*/*"}
+            if send_credentials and fetch_context.authorization:
+                headers["Authorization"] = fetch_context.authorization
+            if send_credentials and fetch_context.cookie_header:
+                headers["Cookie"] = fetch_context.cookie_header
+            response = None
+            try:
+                response = requests.get(resource_url, headers=headers, stream=True,
+                                        timeout=(5, fetch_context.timeout_seconds), allow_redirects=False)
+                if response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise DataFetchError("The resource redirect has no destination.")
+                    resource_url = urljoin(resource_url, location)
+                    continue
+                response.raise_for_status()
+                collected = bytearray()
+                limit = self.settings.max_resource_bytes
+                for chunk in response.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    collected.extend(chunk)
+                    if len(collected) > limit:
+                        raise DataTooLargeError(
+                            "The resource exceeds the configured byte limit of {0} bytes.".format(limit))
+                return bytes(collected), response.url, response
+            except requests.RequestException as exc:
+                raise DataFetchError("Could not fetch the resource.") from exc
+            finally:
+                if response is not None:
+                    response.close()
+        raise DataFetchError("The resource has too many redirects.")
 
     # ---- CSV -------------------------------------------------------------
 

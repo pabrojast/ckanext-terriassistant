@@ -4,10 +4,14 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
+import urllib3
 from flask import Blueprint, Response, request, stream_with_context
+from flask_wtf.csrf import generate_csrf, validate_csrf
+from wtforms.validators import ValidationError
+from werkzeug.http import dump_options_header
 
 import ckan.plugins.toolkit as toolkit
+from .data_assistant.sources import open_public_resource
 
 from .config import TerriassistantSettings
 from .data_service import (
@@ -53,8 +57,12 @@ class TerriassistantController:
             profile = self._profile(ctx)
             terria_type = profile.get("terria_type") or "csv"
             saved_spec, warnings = self._effective_saved_spec(ctx["view"], profile, terria_type)
-            active_spec = saved_spec if saved_spec else tb.default_style_spec(profile)
+            default_spec = tb.default_style_spec(profile)
+            active_spec = saved_spec if saved_spec else default_spec
             init_source, encoded = self._render(ctx, active_spec, profile, terria_type)
+            _, default_encoded = self._render(ctx, default_spec, profile, terria_type)
+            current_user = ctx["user_context"].get("auth_user_obj")
+            can_chat = self._can_chat(ctx["user_context"])
             return self._json(
                 {
                     "view_id": view_id,
@@ -69,11 +77,19 @@ class TerriassistantController:
                     "terria_instance_url": self.settings.terria_instance_url,
                     "saved_spec": saved_spec,
                     "active_spec": active_spec,
+                    "default_spec": default_spec,
+                    "default_encoded_config": default_encoded,
                     "init_source": init_source,
                     "encoded_config": encoded,
                     "warnings": warnings,
                     "chat_enabled": bool(self.settings.deepseek_api_key),
+                    "can_chat": can_chat,
                     "can_save": ctx["can_save"],
+                    "csrf_token": generate_csrf(),
+                    "storage_scope": str(getattr(current_user, "id", None) or ctx["user_context"].get("user") or "anonymous"),
+                    "login_url": toolkit.url_for("user.login", came_from=toolkit.url_for(
+                        "resource.read", id=ctx["package"].get("name") or ctx["package"]["id"],
+                        resource_id=ctx["resource"]["id"], view_id=view_id)),
                     "suggested_prompts": profile.get("suggested_prompts", []),
                 }
             )
@@ -88,14 +104,19 @@ class TerriassistantController:
 
     def chat(self, view_id: str) -> Response:
         try:
+            if not self._can_chat(self._user_context()):
+                return self._err("Sign in to IHP to use the map assistant.", 401)
             ctx = self._load_view_context(view_id)
+            body = request.get_json(silent=True)
+            messages = body.get("messages") or []
+            if (not isinstance(messages, list) or not messages or len(messages) > 100
+                    or any(not isinstance(item, dict) or item.get("role") not in ("user", "assistant")
+                           or not isinstance(item.get("content"), str) or len(item["content"]) > 8000
+                           for item in messages)
+                    or not any(item["role"] == "user" and item["content"].strip() for item in messages)):
+                return self._err("messages must contain user/assistant text of at most 8000 characters each.", 400)
             profile = self._profile(ctx)
             terria_type = profile.get("terria_type") or "csv"
-
-            body = request.get_json(silent=True) or {}
-            messages = body.get("messages") or []
-            if not isinstance(messages, list):
-                return self._err("messages must be an array.", 400)
 
             current_spec, draft_warnings = self._resolve_incoming_spec(
                 body.get("draft_spec"), profile, ctx["view"], terria_type
@@ -147,7 +168,7 @@ class TerriassistantController:
             profile = self._profile(ctx)
             terria_type = profile.get("terria_type") or "csv"
 
-            body = request.get_json(silent=True) or {}
+            body = request.get_json(silent=True)
             try:
                 spec = tb.validate_style_spec(body.get("draft_spec"), profile, terria_type)
             except tb.OverrideValidationError as exc:
@@ -167,6 +188,7 @@ class TerriassistantController:
                     "saved_at": datetime.now(timezone.utc).isoformat(),
                     "saved_by": username,
                 },
+                ctx["user_context"],
             )
             init_source, encoded = self._render(ctx, spec, profile, terria_type)
             return self._json(
@@ -195,10 +217,10 @@ class TerriassistantController:
         if not resolved:
             return self._err("Resource not found.", 404)
         upstream_url, content_type, name = resolved
+        stream = open_public_resource(upstream_url, timeout_seconds=60)
         try:
-            upstream = requests.get(upstream_url, stream=True, timeout=(5, 60), allow_redirects=True)
-            upstream.raise_for_status()
-        except requests.RequestException:
+            upstream, _ = stream.__enter__()
+        except (ValueError, OSError, urllib3.exceptions.HTTPError):
             return self._err("Could not fetch the resource.", 502)
 
         resp_content_type = (
@@ -211,14 +233,23 @@ class TerriassistantController:
         }
         download_name = filename or name
         if download_name:
-            headers["Content-Disposition"] = 'inline; filename="{0}"'.format(download_name)
+            download_name = str(download_name).replace("\r", "").replace("\n", "")
+            headers["Content-Disposition"] = dump_options_header("inline", {"filename": download_name})
         if upstream.headers.get("Content-Length"):
             headers["Content-Length"] = upstream.headers["Content-Length"]
-        return Response(
-            stream_with_context(upstream.iter_content(chunk_size=65536)),
+        def chunks():
+            try:
+                yield from upstream.stream(65536)
+            finally:
+                stream.__exit__(None, None, None)
+
+        response = Response(
+            stream_with_context(chunks()),
             status=200,
             headers=headers,
         )
+        response.call_on_close(lambda: stream.__exit__(None, None, None))
+        return response
 
     # ---- internals ----------------------------------------------------
 
@@ -229,6 +260,8 @@ class TerriassistantController:
         return init_source, tb.encode_init_source(init_source)
 
     def _profile(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        if not resource_utils.user_may_download(ctx["user_context"], ctx["resource"]["id"]):
+            raise toolkit.NotAuthorized("Downloading this resource is not permitted")
         return self.data_service.get_profile(ctx["resource"], self._fetch_context())
 
     def _catalog_item(self, ctx: dict[str, Any], terria_type: str) -> dict[str, Any]:
@@ -291,7 +324,7 @@ class TerriassistantController:
             return None
         return parsed if isinstance(parsed, dict) else None
 
-    def _persist_view(self, view: dict[str, Any], extra_fields: dict[str, Any]) -> None:
+    def _persist_view(self, view: dict[str, Any], extra_fields: dict[str, Any], user_context: dict[str, Any]) -> None:
         update_payload = {
             "id": view.get("id"),
             "resource_id": view.get("resource_id"),
@@ -300,7 +333,9 @@ class TerriassistantController:
             "description": view.get("description", ""),
         }
         update_payload.update(extra_fields)
-        context: dict[str, Any] = {"user": "ckan.system", "ignore_auth": True}
+        # Recheck authorization in the action, including grants revoked since
+        # bootstrap/profile loading, and attribute the write to the editor.
+        context: dict[str, Any] = dict(user_context)
         try:
             import ckan.model as model
 
@@ -311,10 +346,15 @@ class TerriassistantController:
         toolkit.get_action("resource_view_update")(context, update_payload)
 
     def _load_view_context(self, view_id: str) -> dict[str, Any]:
-        view = toolkit.get_action("resource_view_show")({"ignore_auth": True}, {"id": view_id})
         user_context = self._user_context()
-        resource = toolkit.get_action("resource_show")(user_context, {"id": view["resource_id"]})
-        package = toolkit.get_action("package_show")(user_context, {"id": resource["package_id"]})
+        view = toolkit.get_action("resource_view_show")(dict(user_context), {"id": view_id})
+        if view.get("view_type") != "terriassistant":
+            raise toolkit.ObjectNotFound("Map assistant view not found")
+        resource = toolkit.get_action("resource_show")(dict(user_context), {"id": view["resource_id"]})
+        package = toolkit.get_action("package_show")(dict(user_context), {"id": resource["package_id"]})
+        visible = toolkit.get_action("resource_view_list")(dict(user_context), {"id": resource["id"]})
+        if not any(item.get("id") == view_id for item in visible):
+            raise toolkit.NotAuthorized("The resource view is not available")
         can_save = False
         try:
             toolkit.check_access(
@@ -344,6 +384,8 @@ class TerriassistantController:
     def _user_context(self) -> dict[str, Any]:
         try:
             current_user = toolkit.current_user
+            if not current_user or getattr(current_user, "is_anonymous", True):
+                return {"user": "", "auth_user_obj": None}
             user_name = current_user.name if hasattr(current_user, "name") else str(current_user)
             return {"user": user_name, "auth_user_obj": current_user}
         except (AttributeError, RuntimeError):
@@ -351,6 +393,11 @@ class TerriassistantController:
                 "user": getattr(toolkit.g, "user", ""),
                 "auth_user_obj": getattr(toolkit.g, "userobj", None),
             }
+
+    def _can_chat(self, context: dict[str, Any]) -> bool:
+        user = context.get("auth_user_obj")
+        return bool(context.get("user") and user and not getattr(user, "is_anonymous", True)
+                    and getattr(user, "state", "") == "active")
 
     def _current_username(self) -> str:
         return str(self._user_context().get("user") or "")
@@ -364,6 +411,36 @@ class TerriassistantController:
 
     def _err(self, message: str, status_code: int) -> Response:
         return self._json({"success": False, "message": message}, status_code)
+
+
+@terriassistant_api.before_request
+def protect_view_requests():
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        controller = _get_controller()
+        if request.content_length and request.content_length > controller.settings.max_config_bytes + 16384:
+            return controller._err("The map request is too large.", 413)
+        try:
+            validate_csrf(request.headers.get("X-CSRFToken"))
+        except ValidationError:
+            return controller._err("Refresh the map assistant to renew your session.", 403)
+        if not isinstance(request.get_json(silent=True), dict):
+            return controller._err("Expected a JSON object.", 400)
+
+
+@terriassistant_api.after_request
+def private_view_response(response):
+    # Bootstrap contains user capabilities, sampled data and expiring proxy URLs.
+    response.headers["Cache-Control"] = "private, no-store, max-age=0"
+    response.headers["CDN-Cache-Control"] = "no-store"
+    response.headers["Surrogate-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.vary.update(("Cookie", "Authorization"))
+    try:
+        from ckanext.terria_view.api_endpoints import _disable_ckan_response_cache
+        _disable_ckan_response_cache()
+    except ImportError:
+        pass
+    return response
 
 
 @terriassistant_api.get("/api/terriassistant/view/<view_id>/bootstrap")
