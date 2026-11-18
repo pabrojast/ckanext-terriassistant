@@ -10,11 +10,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from flask import Flask
+from flask import Flask, url_for
 from flask_babel import Babel
 from werkzeug.exceptions import NotFound
 from ckan.plugins import toolkit
+from ckan import logic
 from ckan.lib import datapreview
+from ckan.views import api as api_views
 from ckan.views import resource as resource_views
 from ckanext.terriassistant import plugin as module
 from ckanext.terriassistant.config import TerriassistantSettings
@@ -125,8 +127,44 @@ with patch.object(resource_views, "get_action", side_effect=action), \
         else:
             raise AssertionError("Disabled embedded view link did not return 404")
 
+# CKAN copies metadata from the chained wrapper, not the underlying GET action.
+# Exercise its actual action assembly and HTTP dispatcher so a missing
+# side_effect_free annotation cannot silently turn metadata GETs into HTTP 400.
+def fixture_functions(action_module):
+    if action_module.__name__ != "ckan.logic.action.get":
+        return []
+    return [
+        ("resource_view_show", lambda ctx, params: standard if params["id"] == "standard" else assistant),
+        ("resource_view_list", lambda ctx, params: records),
+    ]
+
+
+app = Flask("view-api-get-contract")
+Babel(app)
+app.add_url_rule("/api/3/action/<logic_function>", endpoint="api.action", view_func=api_views.action)
+with patch.object(logic, "_actions", {}), \
+        patch.object(logic.authz, "get_local_functions", side_effect=fixture_functions), \
+        patch.object(logic.authz, "auth_functions_list", return_value=[]), \
+        patch.object(logic.p, "PluginImplementations", return_value=[plugin]), \
+        patch.object(api_views, "current_user", SimpleNamespace(name="", is_authenticated=False)), \
+        patch.object(api_views, "url_for", url_for):
+    for name in ("resource_view_list", "resource_view_show"):
+        assert logic.get_action(name).side_effect_free is True
+    for enabled in (True, False):
+        plugin.configure({"ckanext.terriassistant.view_enabled": enabled})
+        client = app.test_client()
+        normal = client.get("/api/3/action/resource_view_show?id=standard")
+        assert normal.status_code == 200, normal.data
+        assert normal.json["result"] == standard
+        hidden = client.get("/api/3/action/resource_view_show?id=assistant")
+        assert hidden.status_code == (200 if enabled else 404), hidden.data
+        listed = client.get("/api/3/action/resource_view_list?id=resource")
+        assert listed.status_code == 200, listed.data
+        assert listed.json["result"] == ([standard, assistant, text] if enabled else [standard, text])
+
 print(json.dumps({"success": True, "default_enabled_compatible": True,
     "disabled_view_hidden": True, "new_view_option_hidden": True,
     "direct_and_embedded_links": 404, "legacy_api": 404,
     "standard_terria_default": True, "data_assistant_api_retained": True,
-    "stored_records_unchanged": True, "network": "disabled", "database": "isolated action fixtures"}))
+    "metadata_http_get": "normal 200; disabled assistant 404", "stored_records_unchanged": True,
+    "network": "disabled", "database": "isolated action fixtures"}))

@@ -130,6 +130,7 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
 
     # IActions
     @toolkit.chained_action
+    @toolkit.side_effect_free
     def resource_view_list(self, next_action, context, data_dict):
         # Reads preserve existing view records and the caller's visibility filters.
         # A legacy auto-created assistant must not displace the standard map.
@@ -139,6 +140,7 @@ class TerriassistantPlugin(plugins.SingletonPlugin):
         return prefer_standard_map(views)
 
     @toolkit.chained_action
+    @toolkit.side_effect_free
     def resource_view_show(self, next_action, context, data_dict):
         view = next_action(context, data_dict)
         if not self.settings.view_enabled and view.get("view_type") == PLUGIN_NAME:
