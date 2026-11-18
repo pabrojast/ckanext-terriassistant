@@ -188,3 +188,12 @@ links omit local/private/non-shareable layers. This release does not create
 datasets or save resource views. The companion Terria UI exposes catalogue search
 (including polygon drawing) under Add data, independently of AI conversations.
 File and URL imports use My data; map links use Share.
+
+CKAN resource view switch
+-------------------------
+
+Set ``ckanext.terriassistant.view_enabled = false`` to disable the separate
+Map Assistant resource view, its creation menu and its legacy API routes.
+Existing saved view records are retained; standard Terria views remain available.
+The independent API used by the assistant inside Terria stays registered.
+View listing is read-only and no longer creates assistant records.
